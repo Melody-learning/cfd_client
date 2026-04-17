@@ -13,12 +13,18 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -95,7 +101,9 @@ fun MarketScreen(
                     ) { quote ->
                         QuoteItem(
                             quote = quote,
+                            isWatchlisted = quote.symbol in state.watchlistedSymbols,
                             onClick = { onSymbolClick(quote.symbol, quote.displayName) },
+                            onToggleWatchlist = { viewModel.toggleWatchlist(quote.symbol) },
                         )
                     }
                 }
@@ -178,10 +186,15 @@ private fun CategoryFilterRow(
 /**
  * 行情列表项 — Linear Pro 风格
  *
- * 0.5dp 极细边框 + 1px 顶部微光
+ * 左侧收藏⭐ + 品种名 | 中间价格 | 右侧涨跌幅
  */
 @Composable
-private fun QuoteItem(quote: Quote, onClick: () -> Unit = {}) {
+private fun QuoteItem(
+    quote: Quote,
+    isWatchlisted: Boolean,
+    onClick: () -> Unit = {},
+    onToggleWatchlist: () -> Unit = {},
+) {
     val priceColor = if (quote.isUp) {
         DesignTokens.SemanticColors.PriceUp
     } else {
@@ -202,11 +215,30 @@ private fun QuoteItem(quote: Quote, onClick: () -> Unit = {}) {
             )
             .clickable { onClick() }
             .padding(
-                horizontal = DesignTokens.SpacingTokens.LG,
-                vertical = DesignTokens.SpacingTokens.MD,
+                start = DesignTokens.SpacingTokens.XS,
+                end = DesignTokens.SpacingTokens.LG,
+                top = DesignTokens.SpacingTokens.XS,
+                bottom = DesignTokens.SpacingTokens.XS,
             ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // 收藏按钮
+        IconButton(
+            onClick = onToggleWatchlist,
+            modifier = Modifier.size(36.dp),
+        ) {
+            Icon(
+                imageVector = if (isWatchlisted) Icons.Filled.Star else Icons.Outlined.StarBorder,
+                contentDescription = if (isWatchlisted) "取消收藏" else "收藏",
+                tint = if (isWatchlisted) {
+                    DesignTokens.SemanticColors.Accent
+                } else {
+                    DesignTokens.SemanticColors.TextTertiary
+                },
+                modifier = Modifier.size(20.dp),
+            )
+        }
+
         // 左侧: 品种名称
         Column(modifier = Modifier.weight(1f)) {
             Text(

@@ -5,6 +5,7 @@ import com.astralw.core.network.model.CandleResponseDto
 import com.astralw.core.network.model.DealsResponseDto
 import com.astralw.core.network.model.LoginRequestDto
 import com.astralw.core.network.model.LoginResponseDto
+import com.astralw.core.network.model.OrdersResponseDto
 import com.astralw.core.network.model.PositionsResponseDto
 import com.astralw.core.network.model.QuotesResponseDto
 import com.astralw.core.network.model.RefreshRequestDto
@@ -101,6 +102,14 @@ interface AstralWApiService {
 
     @GET("api/v1/positions")
     suspend fun getPositions(): PositionsResponseDto
+
+    // ─── Pending Orders ───
+
+    @GET("api/v1/orders")
+    suspend fun getOrders(): OrdersResponseDto
+
+    @retrofit2.http.DELETE("api/v1/orders/{ticket}")
+    suspend fun cancelOrder(@retrofit2.http.Path("ticket") ticket: Long): TradeResultDto
 
     // ─── History ───
 

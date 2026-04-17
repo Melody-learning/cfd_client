@@ -4,6 +4,8 @@ import com.astralw.core.data.model.Deal
 import com.astralw.core.data.model.Order
 import com.astralw.core.data.model.OrderDirection
 import com.astralw.core.data.model.OrderStatus
+import com.astralw.core.data.model.OrderType
+import com.astralw.core.data.model.PendingOrder
 import com.astralw.core.network.api.AstralWApiService
 import com.astralw.core.network.model.PositionDto
 import com.astralw.core.network.model.TradeCloseRequestDto
@@ -38,6 +40,9 @@ class RemoteTradingRepository @Inject constructor(
         lots: String,
         stopLoss: String?,
         takeProfit: String?,
+        orderType: OrderType,
+        price: String?,
+        expiration: Long?,
     ): Result<Order> {
         return try {
             // 记录当前持仓 ID，用于检测新增持仓
@@ -50,6 +55,9 @@ class RemoteTradingRepository @Inject constructor(
                     lots = lots,
                     stopLoss = stopLoss?.takeIf { it.isNotBlank() && it != "0" },
                     takeProfit = takeProfit?.takeIf { it.isNotBlank() && it != "0" },
+                    orderType = if (orderType == OrderType.MARKET) null else orderType.apiValue,
+                    price = price?.takeIf { it.isNotBlank() },
+                    expiration = expiration?.takeIf { it > 0 },
                 ),
             )
 
@@ -202,6 +210,45 @@ class RemoteTradingRepository @Inject constructor(
             openTime = timeCreate * 1000,
             status = OrderStatus.OPEN,
         )
+    }
+    override suspend fun getPendingOrders(): Result<List<PendingOrder>> {
+        return try {
+            val resp = api.getOrders()
+            val orders = resp.orders.map { dto ->
+                PendingOrder(
+                    ticket = dto.ticket,
+                    symbol = dto.symbol,
+                    displayName = dto.symbol.mapToDisplayName(),
+                    type = OrderType.fromApiValue(dto.type),
+                    lots = mt5VolToLots(dto.volume),
+                    triggerPrice = dto.priceOpen,
+                    stopLoss = dto.stopLoss.takeIf { it != "0" && it != "0.0" && it.isNotEmpty() },
+                    takeProfit = dto.takeProfit.takeIf { it != "0" && it != "0.0" && it.isNotEmpty() },
+                    currentPrice = dto.priceCurrent,
+                    setupTime = dto.timeSetup * 1000,
+                    expiration = dto.expiration,
+                    comment = dto.comment,
+                )
+            }
+            Result.success(orders)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun cancelPendingOrder(ticket: Long): Result<Unit> {
+        return try {
+            val result = api.cancelOrder(ticket)
+            if (result.retcode == RETCODE_DONE || result.retcode == RETCODE_PLACED) {
+                Result.success(Unit)
+            } else {
+                Result.failure(Exception(result.message))
+            }
+        } catch (e: retrofit2.HttpException) {
+            Result.failure(Exception(parseTradeError(e)))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 
     override suspend fun getHistoryDeals(fromSec: Long, toSec: Long): Result<List<Deal>> {

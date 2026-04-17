@@ -17,3 +17,9 @@ local.properties
 *.jks
 *.keystore
 .kotlin/
+
+# 不上传到 git 的敏感/内部内容
+MT5_web_api_docs/
+openspec/
+AGENTS.md
+.agent/

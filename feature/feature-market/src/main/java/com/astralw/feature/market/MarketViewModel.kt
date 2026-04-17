@@ -26,6 +26,9 @@ class MarketViewModel @Inject constructor(
 
     private val _selectedCategory = MutableStateFlow("all")
 
+    /** 本地收藏列表 (暂存，后续可持久化) */
+    private val _watchlist = MutableStateFlow<Set<String>>(emptySet())
+
     /**
      * 行情 UI 状态
      *
@@ -34,7 +37,8 @@ class MarketViewModel @Inject constructor(
     val uiState = combine(
         marketRepository.observeQuotes().sample(500),
         _selectedCategory,
-    ) { quotes, category ->
+        _watchlist,
+    ) { quotes, category, watchlist ->
         val filtered = if (category == "all") {
             quotes
         } else {
@@ -43,6 +47,7 @@ class MarketViewModel @Inject constructor(
         MarketUiState.Success(
             quotes = filtered,
             selectedCategory = category,
+            watchlistedSymbols = watchlist,
         ) as MarketUiState
     }.stateIn(
         scope = viewModelScope,
@@ -59,6 +64,15 @@ class MarketViewModel @Inject constructor(
      */
     fun selectCategory(category: String) {
         _selectedCategory.value = category
+    }
+
+    /**
+     * 切换品种收藏状态
+     */
+    fun toggleWatchlist(symbol: String) {
+        _watchlist.value = _watchlist.value.toMutableSet().apply {
+            if (contains(symbol)) remove(symbol) else add(symbol)
+        }
     }
 
     private fun startStreaming() {

@@ -10,6 +10,7 @@ import com.astralw.core.data.repository.RemoteTradingRepository
 import com.astralw.core.data.repository.TradingRepository
 import com.astralw.core.data.token.TokenManager
 import com.astralw.core.network.api.AstralWApiService
+import com.astralw.core.network.api.MarketWebSocketService
 import com.astralw.core.network.interceptor.AuthInterceptor
 import com.astralw.core.network.interceptor.TokenAuthenticator
 import com.astralw.core.network.token.TokenProvider
@@ -48,7 +49,9 @@ abstract class DataModule {
 
     companion object {
         /** 真机 WiFi 调试: 电脑局域网 IP */
-        private const val BASE_URL = "http://10.0.0.44:8000/"
+        private const val BASE_URL = "http://10.0.0.67:8000/"
+        /** WebSocket 行情推送 URL */
+        private const val WS_URL = "ws://10.0.0.67:8000/api/v1/market/stream"
 
         @Provides
         @Singleton
@@ -92,6 +95,15 @@ abstract class DataModule {
         @Singleton
         fun provideApiService(retrofit: Retrofit): AstralWApiService {
             return retrofit.create(AstralWApiService::class.java)
+        }
+
+        @Provides
+        @Singleton
+        fun provideMarketWebSocketService(
+            client: OkHttpClient,
+            json: Json,
+        ): MarketWebSocketService {
+            return MarketWebSocketService(client, json, WS_URL)
         }
     }
 }

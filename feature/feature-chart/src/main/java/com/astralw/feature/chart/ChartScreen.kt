@@ -13,12 +13,19 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.outlined.AccountBalance
+import androidx.compose.material.icons.outlined.Work
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -32,8 +39,12 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.astralw.core.ui.theme.DesignTokens
 
+import androidx.compose.foundation.layout.navigationBarsPadding
+
 /**
- * K 线图页面
+ * K 线图页面 — 按原型图重构
+ *
+ * 布局：顶部导航 → 品种信息 → 时间周期 → K线图 → 底部价格+买卖栏
  */
 @Composable
 fun ChartScreen(
@@ -47,6 +58,7 @@ fun ChartScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(DesignTokens.SemanticColors.Background)
+            .navigationBarsPadding()
     ) {
         when (val state = uiState) {
             is ChartUiState.Loading -> {
@@ -71,25 +83,22 @@ fun ChartScreen(
                 }
             }
             is ChartUiState.Success -> {
-                // 标题栏：品种名 + 实时价格
-                ChartTopBar(
+                // ─── 顶部导航栏：← | 交易 | 资金 ───
+                ChartTopNavBar(onBack = onBack)
+
+                // ─── 品种信息行 ───
+                SymbolInfoRow(
                     displayName = state.displayName,
                     symbol = state.symbol,
-                    bid = state.currentBid,
-                    change = state.change,
-                    changePercent = state.changePercent,
-                    isUp = state.isUp,
-                    onBack = onBack,
                 )
 
-                // 买卖价
-                PriceBar(
-                    bid = state.currentBid,
-                    ask = state.currentAsk,
-                    isUp = state.isUp,
+                // ─── 时间周期选择器 ───
+                TimeframeSelector(
+                    selectedTimeframe = state.selectedTimeframe,
+                    onTimeframeSelected = viewModel::selectTimeframe,
                 )
 
-                // K 线图
+                // ─── K 线图 ───
                 CandlestickChart(
                     candles = state.candles,
                     currentBid = state.currentBid,
@@ -99,50 +108,176 @@ fun ChartScreen(
                         .padding(horizontal = DesignTokens.SpacingTokens.SM),
                 )
 
-                // 时间周期选择
-                TimeframeSelector(
-                    selectedTimeframe = state.selectedTimeframe,
-                    onTimeframeSelected = viewModel::selectTimeframe,
+                // ─── 底部价格信息栏 ───
+                BottomPriceBar(
+                    bid = state.currentBid,
+                    change = state.change,
+                    changePercent = state.changePercent,
+                    isUp = state.isUp,
                 )
 
-                Spacer(modifier = Modifier.height(DesignTokens.SpacingTokens.SM))
-
-                // Trade 按钮
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = DesignTokens.SpacingTokens.LG)
-                        .height(48.dp)
-                        .background(
-                            color = DesignTokens.SemanticColors.Accent,
-                            shape = RoundedCornerShape(DesignTokens.RadiusTokens.MD),
-                        )
-                        .clickable { onTrade(state.symbol, state.displayName) },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = "Trade ${state.displayName}",
-                        color = DesignTokens.Palette.White,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(DesignTokens.SpacingTokens.LG))
+                // ─── 底部交易栏 ───
+                BottomTradeBar(
+                    symbol = state.symbol,
+                    displayName = state.displayName,
+                    bid = state.currentBid,
+                    ask = state.currentAsk,
+                    onTrade = onTrade,
+                )
             }
         }
     }
 }
 
+// ═══════════════════════════════════════════════════════
+// 顶部导航栏：← 返回 | 交易（居中标题）| 资金图标
+// ═══════════════════════════════════════════════════════
+
 @Composable
-private fun ChartTopBar(
-    displayName: String,
-    symbol: String,
+private fun ChartTopNavBar(onBack: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = DesignTokens.SpacingTokens.XS),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onBack) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "Back",
+                tint = DesignTokens.SemanticColors.TextPrimary,
+            )
+        }
+
+        Text(
+            text = "交易",
+            color = DesignTokens.SemanticColors.TextPrimary,
+            fontSize = 17.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.weight(1f),
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        )
+
+        IconButton(onClick = { /* TODO: 资金页 */ }) {
+            Icon(
+                imageVector = Icons.Outlined.AccountBalance,
+                contentDescription = "资金",
+                tint = DesignTokens.SemanticColors.TextPrimary,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════
+// 品种信息行：品种名 ▼ | 描述 + 规则 >
+// ═══════════════════════════════════════════════════════
+
+@Composable
+private fun SymbolInfoRow(displayName: String, symbol: String) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                horizontal = DesignTokens.SpacingTokens.LG,
+                vertical = DesignTokens.SpacingTokens.XS,
+            ),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = displayName,
+                color = DesignTokens.SemanticColors.TextPrimary,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Spacer(modifier = Modifier.width(DesignTokens.SpacingTokens.XS))
+            Text(
+                text = "▼",
+                color = DesignTokens.SemanticColors.TextTertiary,
+                fontSize = 12.sp,
+            )
+        }
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "$symbol 永续合约",
+                color = DesignTokens.SemanticColors.TextTertiary,
+                fontSize = 12.sp,
+            )
+            Text(
+                text = " ｜ ",
+                color = DesignTokens.SemanticColors.TextTertiary,
+                fontSize = 12.sp,
+            )
+            Text(
+                text = "规则",
+                color = DesignTokens.SemanticColors.TextTertiary,
+                fontSize = 12.sp,
+            )
+            Spacer(modifier = Modifier.width(DesignTokens.SpacingTokens.XXS))
+            Text(
+                text = ">",
+                color = DesignTokens.SemanticColors.TextTertiary,
+                fontSize = 12.sp,
+            )
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════
+// 时间周期选择器
+// ═══════════════════════════════════════════════════════
+
+@Composable
+private fun TimeframeSelector(
+    selectedTimeframe: String,
+    onTimeframeSelected: (String) -> Unit,
+) {
+    val displayLabels = mapOf(
+        "M1" to "1分",
+        "M5" to "5分",
+        "M15" to "15分",
+        "H1" to "1小时",
+        "H4" to "4小时",
+        "D1" to "日线",
+    )
+
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = DesignTokens.SpacingTokens.LG),
+        horizontalArrangement = Arrangement.spacedBy(DesignTokens.SpacingTokens.MD),
+        modifier = Modifier.padding(vertical = DesignTokens.SpacingTokens.SM),
+    ) {
+        items(TIMEFRAMES) { tf ->
+            val isSelected = tf == selectedTimeframe
+            val textColor = if (isSelected) {
+                DesignTokens.SemanticColors.TextPrimary
+            } else {
+                DesignTokens.SemanticColors.TextTertiary
+            }
+
+            Text(
+                text = displayLabels[tf] ?: tf,
+                color = textColor,
+                fontSize = if (isSelected) 15.sp else 13.sp,
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                modifier = Modifier
+                    .clickable { onTimeframeSelected(tf) }
+                    .padding(vertical = DesignTokens.SpacingTokens.XS),
+            )
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════
+// 底部价格信息栏：当前价格 + 涨跌 | ● 交易中
+// ═══════════════════════════════════════════════════════
+
+@Composable
+private fun BottomPriceBar(
     bid: String,
     change: String,
     changePercent: String,
     isUp: Boolean,
-    onBack: () -> Unit,
 ) {
     val priceColor = if (isUp) {
         DesignTokens.SemanticColors.PriceUp
@@ -155,172 +290,133 @@ private fun ChartTopBar(
             .fillMaxWidth()
             .padding(
                 horizontal = DesignTokens.SpacingTokens.LG,
-                vertical = DesignTokens.SpacingTokens.MD,
+                vertical = DesignTokens.SpacingTokens.SM,
             ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // 返回
+        // 价格
         Text(
-            text = "←",
-            color = DesignTokens.SemanticColors.TextSecondary,
-            fontSize = 20.sp,
-            modifier = Modifier
-                .clickable { onBack() }
-                .padding(end = DesignTokens.SpacingTokens.MD),
+            text = bid,
+            color = DesignTokens.SemanticColors.TextPrimary,
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Bold,
         )
 
-        Column(modifier = Modifier.weight(1f)) {
+        Spacer(modifier = Modifier.width(DesignTokens.SpacingTokens.SM))
+
+        // 涨跌幅
+        Column {
             Text(
-                text = displayName,
-                color = DesignTokens.SemanticColors.TextPrimary,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
+                text = change,
+                color = priceColor,
+                fontSize = 12.sp,
             )
             Text(
-                text = symbol,
-                color = DesignTokens.SemanticColors.TextTertiary,
+                text = "$changePercent%",
+                color = priceColor,
                 fontSize = 12.sp,
             )
         }
 
-        Column(horizontalAlignment = Alignment.End) {
-            Text(
-                text = bid,
-                color = priceColor,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
+        Spacer(modifier = Modifier.weight(1f))
+
+        // 交易状态
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(DesignTokens.SemanticColors.PriceUp),
             )
+            Spacer(modifier = Modifier.width(DesignTokens.SpacingTokens.XS))
             Text(
-                text = "$change ($changePercent%)",
-                color = priceColor,
-                fontSize = 12.sp,
+                text = "交易中",
+                color = DesignTokens.SemanticColors.TextSecondary,
+                fontSize = 13.sp,
             )
         }
     }
 }
 
-@Composable
-private fun PriceBar(bid: String, ask: String, isUp: Boolean) {
-    val upColor = DesignTokens.SemanticColors.PriceUp
-    val downColor = DesignTokens.SemanticColors.PriceDown
+// ═══════════════════════════════════════════════════════
+// 底部交易栏：持仓图标 | 卖出 | 买入
+// ═══════════════════════════════════════════════════════
 
+@Composable
+private fun BottomTradeBar(
+    symbol: String,
+    displayName: String,
+    bid: String,
+    ask: String,
+    onTrade: (String, String) -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = DesignTokens.SpacingTokens.LG),
+            .padding(
+                horizontal = DesignTokens.SpacingTokens.LG,
+                vertical = DesignTokens.SpacingTokens.SM,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(DesignTokens.SpacingTokens.SM),
     ) {
-        // Sell (Bid)
+        // 持仓快捷入口
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.clickable { /* TODO: 跳转持仓 */ },
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Work,
+                contentDescription = "持仓",
+                tint = DesignTokens.SemanticColors.TextSecondary,
+                modifier = Modifier.size(20.dp),
+            )
+            Text(
+                text = "持仓",
+                color = DesignTokens.SemanticColors.TextSecondary,
+                fontSize = 10.sp,
+            )
+        }
+
+        // 卖出按钮
         Box(
             modifier = Modifier
                 .weight(1f)
+                .height(44.dp)
                 .border(
                     width = DesignTokens.BorderTokens.Thin,
-                    color = downColor.copy(alpha = 0.3f),
-                    shape = RoundedCornerShape(DesignTokens.RadiusTokens.SM),
+                    color = DesignTokens.SemanticColors.Border,
+                    shape = RoundedCornerShape(DesignTokens.RadiusTokens.MD),
                 )
-                .background(
-                    color = downColor.copy(alpha = 0.08f),
-                    shape = RoundedCornerShape(DesignTokens.RadiusTokens.SM),
-                )
-                .padding(
-                    horizontal = DesignTokens.SpacingTokens.MD,
-                    vertical = DesignTokens.SpacingTokens.SM,
-                ),
+                .clickable { onTrade(symbol, displayName) },
+            contentAlignment = Alignment.Center,
         ) {
-            Column {
-                Text(
-                    text = "SELL",
-                    color = DesignTokens.SemanticColors.TextTertiary,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Medium,
-                )
-                Text(
-                    text = bid,
-                    color = downColor,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
+            Text(
+                text = "卖出",
+                color = DesignTokens.SemanticColors.TextPrimary,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
         }
 
-        // Buy (Ask)
+        // 买入按钮（强调色）
         Box(
             modifier = Modifier
                 .weight(1f)
-                .border(
-                    width = DesignTokens.BorderTokens.Thin,
-                    color = upColor.copy(alpha = 0.3f),
-                    shape = RoundedCornerShape(DesignTokens.RadiusTokens.SM),
-                )
+                .height(44.dp)
                 .background(
-                    color = upColor.copy(alpha = 0.08f),
-                    shape = RoundedCornerShape(DesignTokens.RadiusTokens.SM),
+                    color = DesignTokens.SemanticColors.TextPrimary,
+                    shape = RoundedCornerShape(DesignTokens.RadiusTokens.MD),
                 )
-                .padding(
-                    horizontal = DesignTokens.SpacingTokens.MD,
-                    vertical = DesignTokens.SpacingTokens.SM,
-                ),
+                .clickable { onTrade(symbol, displayName) },
+            contentAlignment = Alignment.Center,
         ) {
-            Column {
-                Text(
-                    text = "BUY",
-                    color = DesignTokens.SemanticColors.TextTertiary,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Medium,
-                )
-                Text(
-                    text = ask,
-                    color = upColor,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-        }
-    }
-
-    Spacer(modifier = Modifier.height(DesignTokens.SpacingTokens.SM))
-}
-
-@Composable
-private fun TimeframeSelector(
-    selectedTimeframe: String,
-    onTimeframeSelected: (String) -> Unit,
-) {
-    LazyRow(
-        contentPadding = PaddingValues(horizontal = DesignTokens.SpacingTokens.LG),
-        horizontalArrangement = Arrangement.spacedBy(DesignTokens.SpacingTokens.SM),
-    ) {
-        items(TIMEFRAMES) { tf ->
-            val isSelected = tf == selectedTimeframe
-            val bgColor = if (isSelected) {
-                DesignTokens.SemanticColors.Accent
-            } else {
-                DesignTokens.SemanticColors.SurfaceElevated
-            }
-            val textColor = if (isSelected) {
-                DesignTokens.Palette.White
-            } else {
-                DesignTokens.SemanticColors.TextSecondary
-            }
-
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(DesignTokens.RadiusTokens.SM))
-                    .background(bgColor)
-                    .clickable { onTimeframeSelected(tf) }
-                    .padding(
-                        horizontal = DesignTokens.SpacingTokens.MD,
-                        vertical = DesignTokens.SpacingTokens.SM,
-                    ),
-            ) {
-                Text(
-                    text = tf,
-                    color = textColor,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                )
-            }
+            Text(
+                text = "买入",
+                color = DesignTokens.SemanticColors.Background,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
         }
     }
 }

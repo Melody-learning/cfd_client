@@ -4,6 +4,8 @@ import com.astralw.core.data.model.Deal
 import com.astralw.core.data.model.Order
 import com.astralw.core.data.model.OrderDirection
 import com.astralw.core.data.model.OrderStatus
+import com.astralw.core.data.model.OrderType
+import com.astralw.core.data.model.PendingOrder
 import com.astralw.domain.math.MarginCalculator
 import com.astralw.domain.math.PnLCalculator
 import kotlinx.coroutines.delay
@@ -44,6 +46,9 @@ class MockTradingRepository @Inject constructor() : TradingRepository {
         lots: String,
         stopLoss: String?,
         takeProfit: String?,
+        orderType: OrderType,
+        price: String?,
+        expiration: Long?,
     ): Result<Order> {
         delay(800)
 
@@ -113,6 +118,16 @@ class MockTradingRepository @Inject constructor() : TradingRepository {
     override suspend fun getHistoryDeals(fromSec: Long, toSec: Long): Result<List<Deal>> {
         delay(300)
         return Result.success(emptyList())
+    }
+
+    override suspend fun getPendingOrders(): Result<List<PendingOrder>> {
+        delay(300)
+        return Result.success(emptyList())
+    }
+
+    override suspend fun cancelPendingOrder(ticket: Long): Result<Unit> {
+        delay(300)
+        return Result.success(Unit)
     }
 
     private fun getMockPrice(symbol: String): String = when (symbol) {

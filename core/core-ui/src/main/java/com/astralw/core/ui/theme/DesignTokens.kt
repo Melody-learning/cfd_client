@@ -63,8 +63,8 @@ object DesignTokens {
         val AccentSoft = Palette.Blue400
 
         // 边框
-        val Border = Color(0xFF2A2A2A)
-        val BorderSubtle = Color(0xFF1F1F1F)
+        val Border = Color(0xFF1E1E1E)
+        val BorderSubtle = Color(0xFF161616)
 
         // 微光 (顶部 1px 高亮)
         val TopGlow = Color(0xFF333333)

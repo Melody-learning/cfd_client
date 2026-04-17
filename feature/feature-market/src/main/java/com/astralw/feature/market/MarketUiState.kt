@@ -12,6 +12,7 @@ sealed interface MarketUiState {
     data class Success(
         val quotes: List<Quote>,
         val selectedCategory: String = "all",
+        val watchlistedSymbols: Set<String> = emptySet(),
     ) : MarketUiState
     data class Error(val message: String) : MarketUiState
 }

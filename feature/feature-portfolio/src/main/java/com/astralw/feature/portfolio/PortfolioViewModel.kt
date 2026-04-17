@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.astralw.core.data.model.AccountInfo
 import com.astralw.core.data.model.Deal
 import com.astralw.core.data.model.Order
+import com.astralw.core.data.model.PendingOrder
 import com.astralw.core.data.repository.AuthRepository
 import com.astralw.core.data.repository.TradingRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -22,7 +23,7 @@ import javax.inject.Inject
 /**
  * 持仓 ViewModel
  *
- * 定时轮询账户信息和持仓列表，保持 P&L 和 balance 实时更新。
+ * 高频轮询账户信息+持仓列表（2 秒），低频轮询历史成交（30 秒）。
  * 轮询仅在 ViewModel 存活期间运行（用户离开页面时自动停止）。
  */
 @HiltViewModel
@@ -37,35 +38,56 @@ class PortfolioViewModel @Inject constructor(
     private val _closeResult = MutableStateFlow<String?>(null)
     val closeResult: StateFlow<String?> = _closeResult.asStateFlow()
 
+    /** 缓存历史成交，低频刷新 */
+    private var cachedDeals: List<Deal> = emptyList()
+    /** 缓存挂单列表 */
+    private var cachedPendingOrders: List<PendingOrder> = emptyList()
+
     init {
         loadData()
-        startPolling()
+        startHighFreqPolling()
+        startLowFreqPolling()
     }
 
     /** 首次加载 / 手动重试 */
     fun loadData() {
         viewModelScope.launch {
             _uiState.value = PortfolioUiState.Loading
-            refreshAll()
+            refreshDeals()
+            refreshAccountAndPositions()
         }
     }
 
     /**
-     * 定时刷新（5 秒间隔）
+     * 高频轮询：账户信息 + 持仓列表（2 秒间隔）
+     * P&L 实时性的关键路径
      */
-    private fun startPolling() {
+    private fun startHighFreqPolling() {
         viewModelScope.launch {
             while (true) {
-                delay(POLL_INTERVAL_MS)
-                refreshAll()
+                delay(HIGH_FREQ_POLL_MS)
+                refreshAccountAndPositions()
             }
         }
     }
 
     /**
-     * 同时刷新账户信息 + 持仓列表，更新 UI 状态
+     * 低频轮询：历史成交（30 秒间隔）
+     * 历史成交变化不频繁，无需高频拉取
      */
-    private suspend fun refreshAll() {
+    private fun startLowFreqPolling() {
+        viewModelScope.launch {
+            while (true) {
+                delay(LOW_FREQ_POLL_MS)
+                refreshDeals()
+            }
+        }
+    }
+
+    /**
+     * 刷新账户信息 + 持仓列表，使用缓存的历史成交构建 UI
+     */
+    private suspend fun refreshAccountAndPositions() {
         // 1. 获取账户信息
         val info = authRepository.getAccountInfo().getOrElse { error ->
             if (_uiState.value is PortfolioUiState.Loading) {
@@ -82,14 +104,25 @@ class PortfolioViewModel @Inject constructor(
         // 3. 取最新快照
         val orders = tradingRepository.observeOpenOrders().first()
 
-        // 4. 获取最近 30 天历史成交
-        val now = System.currentTimeMillis() / 1000
-        val thirtyDaysAgo = now - 30L * 24 * 3600
-        val deals = tradingRepository.getHistoryDeals(thirtyDaysAgo, now)
-            .getOrDefault(emptyList())
+        // 3.5 拉取挂单列表
+        cachedPendingOrders = tradingRepository.getPendingOrders().getOrDefault(emptyList())
 
-        // 5. 构建 UI 状态
-        buildSuccessState(info, orders, deals)
+        // 4. 构建 UI 状态（使用缓存的历史成交）
+        buildSuccessState(info, orders, cachedDeals)
+    }
+
+    /**
+     * 刷新历史成交（低频）
+     */
+    private suspend fun refreshDeals() {
+        try {
+            val now = System.currentTimeMillis() / 1000
+            val thirtyDaysAgo = now - 30L * 24 * 3600
+            cachedDeals = tradingRepository.getHistoryDeals(thirtyDaysAgo, now)
+                .getOrDefault(emptyList())
+        } catch (_: Exception) {
+            // 保持缓存数据
+        }
     }
 
     private fun buildSuccessState(info: AccountInfo, orders: List<Order>, deals: List<Deal>) {
@@ -97,8 +130,10 @@ class PortfolioViewModel @Inject constructor(
             _uiState.value = PortfolioUiState.Success(
                 openPositions = emptyList(),
                 historyDeals = deals,
+                pendingOrders = cachedPendingOrders,
                 balance = info.balance,
                 equity = info.equity,
+                margin = info.margin,
                 freeMargin = info.freeMargin,
                 marginLevel = if (info.marginLevel == "0") "∞" else "${info.marginLevel}%",
                 totalPnL = "0.00",
@@ -114,8 +149,10 @@ class PortfolioViewModel @Inject constructor(
             _uiState.value = PortfolioUiState.Success(
                 openPositions = orders,
                 historyDeals = deals,
+                pendingOrders = cachedPendingOrders,
                 balance = info.balance,
                 equity = info.equity,
+                margin = info.margin,
                 freeMargin = info.freeMargin,
                 marginLevel = if (info.marginLevel == "0") "∞" else "${info.marginLevel}%",
                 totalPnL = totalPnL.setScale(2, RoundingMode.HALF_UP).toPlainString(),
@@ -134,7 +171,7 @@ class PortfolioViewModel @Inject constructor(
                 _closeResult.value = "Close failed: ${e.message}"
             }
             delay(CLOSE_REFRESH_DELAY_MS)
-            refreshAll()
+            refreshAccountAndPositions()
         }
     }
 
@@ -142,8 +179,34 @@ class PortfolioViewModel @Inject constructor(
         _closeResult.value = null
     }
 
+    /** 取消挂单 */
+    fun cancelPendingOrder(ticket: Long) {
+        viewModelScope.launch {
+            val result = tradingRepository.cancelPendingOrder(ticket)
+            result.onSuccess {
+                _closeResult.value = "挂单已取消"
+            }.onFailure { e ->
+                _closeResult.value = "取消失败: ${e.message}"
+            }
+            delay(CLOSE_REFRESH_DELAY_MS)
+            refreshAccountAndPositions()
+        }
+    }
+
+    /** 切换持仓/挂单 Tab */
+    fun selectTab(index: Int) {
+        val current = _uiState.value
+        if (current is PortfolioUiState.Success) {
+            _uiState.value = current.copy(selectedTab = index)
+        }
+    }
+
     companion object {
-        private const val POLL_INTERVAL_MS = 5_000L
+        /** 高频轮询：账户+持仓（2 秒） */
+        private const val HIGH_FREQ_POLL_MS = 2_000L
+        /** 低频轮询：历史成交（30 秒） */
+        private const val LOW_FREQ_POLL_MS = 30_000L
         private const val CLOSE_REFRESH_DELAY_MS = 300L
     }
 }
+

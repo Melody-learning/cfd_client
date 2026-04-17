@@ -12,6 +12,9 @@ data class TradeOpenRequestDto(
     val lots: String,
     @SerialName("stop_loss") val stopLoss: String? = null,
     @SerialName("take_profit") val takeProfit: String? = null,
+    @SerialName("order_type") val orderType: String? = null,
+    val price: String? = null,
+    val expiration: Long? = null,
 )
 
 @Serializable

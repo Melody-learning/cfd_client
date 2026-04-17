@@ -3,6 +3,8 @@ package com.astralw.core.data.repository
 import com.astralw.core.data.model.Deal
 import com.astralw.core.data.model.Order
 import com.astralw.core.data.model.OrderDirection
+import com.astralw.core.data.model.OrderType
+import com.astralw.core.data.model.PendingOrder
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -19,7 +21,7 @@ interface TradingRepository {
     /** 观察历史订单 */
     fun observeClosedOrders(): Flow<List<Order>>
 
-    /** 开仓 */
+    /** 开仓 / 挂单 */
     suspend fun openOrder(
         symbol: String,
         displayName: String,
@@ -27,6 +29,9 @@ interface TradingRepository {
         lots: String,
         stopLoss: String?,
         takeProfit: String?,
+        orderType: OrderType = OrderType.MARKET,
+        price: String? = null,
+        expiration: Long? = null,
     ): Result<Order>
 
     /** 平仓 */
@@ -38,6 +43,12 @@ interface TradingRepository {
         stopLoss: String?,
         takeProfit: String?,
     ): Result<Order>
+
+    /** 获取当前挂单列表 */
+    suspend fun getPendingOrders(): Result<List<PendingOrder>>
+
+    /** 取消挂单 */
+    suspend fun cancelPendingOrder(ticket: Long): Result<Unit>
 
     /** 获取历史成交记录 */
     suspend fun getHistoryDeals(fromSec: Long, toSec: Long): Result<List<Deal>>

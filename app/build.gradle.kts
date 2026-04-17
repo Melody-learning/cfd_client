@@ -63,8 +63,8 @@ dependencies {
     implementation(project(":feature:feature-chart"))
     implementation(project(":feature:feature-trading"))
     implementation(project(":feature:feature-portfolio"))
-    implementation(project(":feature:feature-account"))
-    implementation(project(":feature:feature-watchlist"))
+    implementation(project(":feature:feature-history"))
+    implementation(project(":feature:feature-settings"))
 
     // ─── Compose ───
     implementation(platform(libs.compose.bom))

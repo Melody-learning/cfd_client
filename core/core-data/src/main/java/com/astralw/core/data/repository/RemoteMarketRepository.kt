@@ -3,9 +3,14 @@ package com.astralw.core.data.repository
 import android.util.Log
 import com.astralw.core.data.model.Quote
 import com.astralw.core.network.api.AstralWApiService
+import com.astralw.core.network.api.MarketWebSocketService
 import com.astralw.core.network.model.QuoteDto
 import com.astralw.core.network.model.TickStatDto
+import com.astralw.core.network.model.WsQuoteData
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
@@ -18,15 +23,27 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.coroutineContext
 
-// RemoteMarketRepository: polls tick_stat with quotes fallback
-// Change% baseline: D1 candle open price (UTC 00:00)
+/**
+ * RemoteMarketRepository: 行情数据仓库
+ *
+ * 策略: WebSocket 推送为主 → HTTP 轮询降级兜底
+ * - WebSocket 接收单品种 tick，合并到 quotesMap 后发射完整列表
+ * - WebSocket 断线时自动切换到 HTTP 轮询
+ * - 自动重连 WebSocket
+ *
+ * Change% baseline: D1 candle open price (UTC 00:00)
+ */
 @Singleton
 class RemoteMarketRepository @Inject constructor(
     private val api: AstralWApiService,
+    private val wsService: MarketWebSocketService,
 ) : MarketRepository {
 
     private val quotesFlow = MutableStateFlow<List<Quote>>(emptyList())
     private var symbolList: List<String> = emptyList()
+
+    /** 最新行情快照（symbol → Quote），WebSocket 增量更新用 */
+    private val quotesMap = mutableMapOf<String, Quote>()
 
     // D1 open prices: symbol → open price (fetched once per session)
     private val dailyOpen = mutableMapOf<String, BigDecimal>()
@@ -69,10 +86,11 @@ class RemoteMarketRepository @Inject constructor(
             }
         }
 
-        // 1. 立即发第一批报价（无 change% 也没关系，先让列表渲染出来）
+        // 1. 立即发第一批报价（先让列表渲染出来）
         try {
             val firstQuotes = fetchQuotes()
             if (firstQuotes.isNotEmpty()) {
+                firstQuotes.forEach { quotesMap[it.symbol] = it }
                 quotesFlow.value = firstQuotes
                 Log.d(TAG, "startStreaming: first quotes emitted (${firstQuotes.size})")
             }
@@ -80,32 +98,62 @@ class RemoteMarketRepository @Inject constructor(
             Log.w(TAG, "startStreaming: first fetch failed: ${e.message}")
         }
 
-        // 2. 异步加载 D1 开盘价（不阻塞 tick 轮询）
+        // 2. 异步加载 D1 开盘价（不阻塞行情流）
         if (!dailyOpenLoaded) {
-            kotlinx.coroutines.CoroutineScope(coroutineContext).launch {
+            CoroutineScope(coroutineContext).launch {
                 loadDailyOpenPrices()
             }
         }
 
-        // 3. 正常 tick 轮询
+        // 3. 启动 WebSocket 行情收集（异步）
+        CoroutineScope(coroutineContext).launch {
+            collectWebSocketQuotes()
+        }
+
+        // 4. WebSocket 连接 + HTTP 降级轮询
+        wsService.connect()
+        wsService.subscribe(symbolList)
+        Log.d(TAG, "startStreaming: WebSocket connect requested")
+
+        // 降级轮询：仅在 WebSocket 断线时生效
         while (coroutineContext.isActive) {
-            try {
-                val quotes = fetchQuotes()
-                if (quotes.isNotEmpty()) {
-                    quotesFlow.value = quotes
+            if (!wsService.isConnected) {
+                Log.d(TAG, "startStreaming: WS disconnected, HTTP poll fallback")
+                try {
+                    val quotes = fetchQuotes()
+                    if (quotes.isNotEmpty()) {
+                        quotes.forEach { quotesMap[it.symbol] = it }
+                        quotesFlow.value = quotes
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "poll failed", e)
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "poll failed", e)
+                // 尝试重连 WebSocket
+                wsService.connect()
+                wsService.subscribe(symbolList)
             }
             delay(POLL_INTERVAL_MS)
         }
     }
 
-    override suspend fun stopStreaming() {}
+    override suspend fun stopStreaming() {
+        wsService.disconnect()
+    }
+
+    /**
+     * 收集 WebSocket 推送的行情，合并到 quotesMap 后发射完整列表
+     */
+    private suspend fun collectWebSocketQuotes() {
+        wsService.quoteFlow.collect { wsQuote ->
+            val quote = wsQuote.toQuote()
+            quotesMap[quote.symbol] = quote
+            // 发射完整列表（ViewModel 侧 sample(500) 会节流）
+            quotesFlow.value = quotesMap.values.toList()
+        }
+    }
 
     /**
      * Fetch D1 candle for today to get open price as change% baseline.
-     * Uses UTC 00:00 as day boundary — extensible to per-market timezone later.
      */
     private suspend fun loadDailyOpenPrices() {
         Log.d(TAG, "loadDailyOpen: fetching D1 candles for ${symbolList.size} symbols")
@@ -130,18 +178,20 @@ class RemoteMarketRepository @Inject constructor(
         Log.d(TAG, "dailyOpen loaded: ${dailyOpen.size}/${symbolList.size}")
     }
 
+    /**
+     * HTTP 批量获取报价（并发请求）
+     */
     private suspend fun fetchQuotes(): List<Quote> {
         if (symbolList.isEmpty()) return emptyList()
 
-        val allQuotes = mutableListOf<Quote>()
-        symbolList.chunked(BATCH_SIZE).forEach { batch ->
-            val joined = batch.joinToString(",")
-            val batchQuotes = fetchBatchTickStat(joined) ?: fetchBatchQuotes(joined)
-            if (batchQuotes != null) {
-                allQuotes.addAll(batchQuotes)
-            }
+        return coroutineScope {
+            symbolList.chunked(BATCH_SIZE).map { batch ->
+                async {
+                    val joined = batch.joinToString(",")
+                    fetchBatchTickStat(joined) ?: fetchBatchQuotes(joined) ?: emptyList()
+                }
+            }.awaitAll().flatten()
         }
-        return allQuotes
     }
 
     private suspend fun fetchBatchTickStat(symbols: String): List<Quote>? {
@@ -164,12 +214,14 @@ class RemoteMarketRepository @Inject constructor(
         }
     }
 
-    private fun TickStatDto.toQuote(): Quote {
+    // ─── DTO → Quote 转换 ───
+
+    private fun WsQuoteData.toQuote(): Quote {
         val bidDec = bid.toBigDecimalOrNull() ?: BigDecimal.ZERO
         val askDec = ask.toBigDecimalOrNull() ?: BigDecimal.ZERO
-        val digits = bid.substringAfter(".", "").length.coerceAtLeast(2)
-        val spreadDec = (askDec - bidDec).abs().setScale(digits, RoundingMode.HALF_UP)
-        val (changeAbs, changePct) = calcChange(symbol, bidDec, digits)
+        val d = digits.coerceAtLeast(2)
+        val spreadDec = (askDec - bidDec).abs().setScale(d, RoundingMode.HALF_UP)
+        val (changeAbs, changePct) = calcChange(symbol, bidDec, d)
 
         return Quote(
             symbol = symbol,
@@ -182,7 +234,30 @@ class RemoteMarketRepository @Inject constructor(
             change = changeAbs,
             changePercent = changePct,
             spread = spreadDec.toPlainString(),
-            digits = digits,
+            digits = d,
+            timestamp = datetime,
+        )
+    }
+
+    private fun TickStatDto.toQuote(): Quote {
+        val bidDec = bid.toBigDecimalOrNull() ?: BigDecimal.ZERO
+        val askDec = ask.toBigDecimalOrNull() ?: BigDecimal.ZERO
+        val d = bid.substringAfter(".", "").length.coerceAtLeast(2)
+        val spreadDec = (askDec - bidDec).abs().setScale(d, RoundingMode.HALF_UP)
+        val (changeAbs, changePct) = calcChange(symbol, bidDec, d)
+
+        return Quote(
+            symbol = symbol,
+            displayName = symbol.mapToDisplayName(),
+            category = "forex",
+            bid = bid,
+            ask = ask,
+            high = high,
+            low = low,
+            change = changeAbs,
+            changePercent = changePct,
+            spread = spreadDec.toPlainString(),
+            digits = d,
             timestamp = datetime,
         )
     }
@@ -190,9 +265,9 @@ class RemoteMarketRepository @Inject constructor(
     private fun QuoteDto.toQuote(): Quote {
         val bidDec = bid.toBigDecimalOrNull() ?: BigDecimal.ZERO
         val askDec = ask.toBigDecimalOrNull() ?: BigDecimal.ZERO
-        val digits = bid.substringAfter(".", "").length.coerceAtLeast(2)
-        val spreadDec = (askDec - bidDec).abs().setScale(digits, RoundingMode.HALF_UP)
-        val (changeAbs, changePct) = calcChange(symbol, bidDec, digits)
+        val d = bid.substringAfter(".", "").length.coerceAtLeast(2)
+        val spreadDec = (askDec - bidDec).abs().setScale(d, RoundingMode.HALF_UP)
+        val (changeAbs, changePct) = calcChange(symbol, bidDec, d)
 
         return Quote(
             symbol = symbol,
@@ -205,7 +280,7 @@ class RemoteMarketRepository @Inject constructor(
             change = changeAbs,
             changePercent = changePct,
             spread = spreadDec.toPlainString(),
-            digits = digits,
+            digits = d,
             timestamp = datetime,
         )
     }
@@ -230,7 +305,7 @@ class RemoteMarketRepository @Inject constructor(
 
     companion object {
         private const val TAG = "RemoteMarketRepo"
-        private const val POLL_INTERVAL_MS = 1000L
+        private const val POLL_INTERVAL_MS = 2000L  // 降级轮询间隔（仅 WS 断线时）
         private const val MAX_SYMBOLS = 50
         private const val BATCH_SIZE = 10
         private const val MAX_RETRY_ATTEMPTS = 5
