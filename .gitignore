@@ -20,6 +20,10 @@ local.properties
 
 # 不上传到 git 的敏感/内部内容
 MT5_web_api_docs/
+Prototype/
 openspec/
 AGENTS.md
 .agent/
+share/
+api_spec.md
+api_changelog.md
